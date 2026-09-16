@@ -122,6 +122,8 @@ def get_dropbox_access_token():
         auth=(DROPBOX_APP_KEY, DROPBOX_APP_SECRET),
         timeout=10,
     )
+    if not resp.ok:
+        print(f"[dropbox] token refresh failed ({resp.status_code}): {resp.text}")
     resp.raise_for_status()
     return resp.json()["access_token"]
 
