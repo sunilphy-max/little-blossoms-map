@@ -1,13 +1,31 @@
 name: Sync guest map
 
 on:
+  # Manual start. Use this on event day: set "minutes" to how long you
+  # want it watching, and it checks every 60 seconds for that whole time.
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "How long to keep watching (minutes). 330 is the safe max for one job."
+        required: false
+        default: "330"
+      interval:
+        description: "Seconds between checks"
+        required: false
+        default: "60"
+
+  # Background safety net. Runs a single pass every 15 minutes so photos
+  # still get picked up when no watch job is running. Deliberately not
+  # every 5 minutes — the watch job is what gives you fast updates, and
+  # this only exists so nothing is silently missed between them.
   schedule:
-    - cron: "*/1 * * * *"
-  workflow_dispatch: {}
+    - cron: "*/15 * * * *"
 
 jobs:
   sync:
     runs-on: ubuntu-latest
+    # A job can run at most 6 hours. 335 leaves room for setup.
+    timeout-minutes: 335
     steps:
       - uses: actions/checkout@v5
 
@@ -26,6 +44,9 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          # Scheduled runs do a single pass; manual runs watch continuously.
+          RUN_FOR_MINUTES: ${{ github.event_name == 'workflow_dispatch' && inputs.minutes || '0' }}
+          POLL_SECONDS: ${{ github.event_name == 'workflow_dispatch' && inputs.interval || '60' }}
         run: python -u map_sync.py
 
       - name: Upload OCR debug crops
