@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Little Blossoms — Where Our Guests Are From</title>
+
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
+<!-- Supabase: live push updates, no polling -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<style>
+  :root{
+    --ink:#101114; --ink-raised:#191b20; --paper:#eee9dd; --paper-dim:#b7b2a2;
+    --gold:#c9a227; --line:#2c2e34;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{margin:0;background:var(--ink);color:var(--paper);font-family:'Inter',sans-serif;display:flex;flex-direction:column;}
+
+  header{padding:14px 20px;border-bottom:1px solid var(--line);}
+  header h1{font-family:'Fraunces',serif;font-weight:600;font-size:18px;margin:0 0 2px;}
+  header p{margin:0;font-size:12.5px;color:var(--paper-dim);}
+
+  .stats{display:flex;gap:16px;padding:8px 20px;border-bottom:1px solid var(--line);font-size:12px;color:var(--paper-dim);}
+  .stats b{color:var(--paper);font-weight:600;}
+
+  #map{flex:1;min-height:0;background:#0b0c0e;}
+
+  /* Turns OpenStreetMap's light tiles into a dark basemap. Applied only
+     to the tile pane, so photo pins, popups and controls are untouched. */
+  .leaflet-tile-pane{
+    filter: invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.88) saturate(0.55);
+  }
+
+  .photo-pin{width:46px;height:46px;border-radius:50%;border:2px solid var(--gold);background-size:cover;background-position:center;box-shadow:0 2px 8px rgba(0,0,0,0.5);}
+  .photo-pin.unmatched{border-color:var(--paper-dim);background:var(--ink-raised) url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%23b7b2a2" stroke-width="1.5"><circle cx="12" cy="8" r="3.2"/><path d="M5 20c1.2-4 4-6 7-6s5.8 2 7 6"/></svg>') center/22px no-repeat;}
+
+  .leaflet-popup-content-wrapper{background:var(--ink-raised);color:var(--paper);border-radius:10px;}
+  .leaflet-popup-tip{background:var(--ink-raised);}
+  .popup-photo{width:100%;border-radius:6px;margin-bottom:8px;display:block;}
+  .popup-city{font-family:'Fraunces',serif;font-size:14px;}
+
+  .marker-cluster-small, .marker-cluster-medium, .marker-cluster-large{background:rgba(201,162,39,0.25);}
+  .marker-cluster-small div, .marker-cluster-medium div, .marker-cluster-large div{background:var(--gold);color:#231c05;font-weight:600;font-family:'Inter',sans-serif;}
+
+  /* ---- Arrival celebration ---- */
+  .arrival-banner{
+    position:absolute;
+    left:50%;
+    bottom:28px;
+    transform:translate(-50%, 20px);
+    background:var(--ink-raised);
+    border:1px solid var(--gold);
+    border-radius:999px;
+    padding:11px 22px;
+    display:flex;
+    align-items:center;
+    gap:12px;
+    z-index:1200;
+    opacity:0;
+    transition:opacity .45s ease, transform .45s ease;
+    pointer-events:none;
+    box-shadow:0 6px 28px rgba(0,0,0,0.5);
+    max-width:88%;
+  }
+  .arrival-banner.show{opacity:1;transform:translate(-50%, 0);}
+  .arrival-banner img{
+    width:38px;height:38px;border-radius:50%;
+    object-fit:cover;
+    border:2px solid var(--gold);
+    flex-shrink:0;
+  }
+  .arrival-text{min-width:0;}
+  .arrival-label{
+    font-size:10.5px;
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    color:var(--gold);
+    margin:0 0 1px;
+  }
+  .arrival-city{
+    font-family:'Fraunces',serif;
+    font-size:15px;
+    margin:0;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+
+  /* Expanding rings that radiate from a newly placed pin */
+  .arrival-burst{
+    position:relative;
+    width:46px;height:46px;
+    pointer-events:none;
+  }
+  .arrival-burst span{
+    position:absolute;
+    top:50%;left:50%;
+    width:46px;height:46px;
+    margin:-23px 0 0 -23px;
+    border:2px solid var(--gold);
+    border-radius:50%;
+    opacity:0;
+    animation:ripple 2.4s ease-out infinite;
+  }
+  .arrival-burst span:nth-child(2){animation-delay:.8s;}
+  .arrival-burst span:nth-child(3){animation-delay:1.6s;}
+  @keyframes ripple{
+    0%{transform:scale(.6);opacity:.9;}
+    100%{transform:scale(3.4);opacity:0;}
+  }
+
+  .photo-pin.arriving{
+    animation:pinPop .7s cubic-bezier(.34,1.56,.64,1);
+    border-color:#f5d76e;
+    box-shadow:0 0 0 4px rgba(201,162,39,0.35), 0 2px 12px rgba(0,0,0,0.6);
+  }
+  @keyframes pinPop{
+    0%{transform:scale(0) translateY(-14px);}
+    60%{transform:scale(1.22) translateY(0);}
+    100%{transform:scale(1);}
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    .arrival-burst span{animation:none;}
+    .photo-pin.arriving{animation:none;}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h3>Little Blossoms - One World!</h3>
+  <h2>Where Our Guests Are From</h2>
+  <p>Zoom out for a count by city — zoom in to see each guest's photo.</p>
+</header>
+
+<div class="stats">
+  <span><b id="statCities">0</b> cities</span>
+  <span><b id="statMatched">0</b> with a photo</span>
+</div>
+
+<div id="map"></div>
+
+<div class="arrival-banner" id="arrivalBanner">
+  <img id="arrivalPhoto" alt="" style="display:none">
+  <div class="arrival-text">
+    <p class="arrival-label">Just joined the map</p>
+    <p class="arrival-city" id="arrivalCity"></p>
+  </div>
+</div>
+
+<script>
+  /* =====================================================================
+     CONFIG — fill in the same bin ID used in map_backend.py.
+     No API key needed here since the bin is set to public-read.
+     ===================================================================== */
+  /* Paste your two values from Supabase > Project Settings > API.
+     The anon key is designed to be public: the database's row-level
+     security is what protects the data, not hiding this string.
+     Never put the service_role key in this file. */
+  const SUPABASE_URL = "https://clrxvekjvicmsxotxawq.supabase.co";
+  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNscnh2ZWtqdmljbXN4b3R4YXdxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk2MDcxNTAsImV4cCI6MjEwNTE4MzE1MH0.Bs5dv04VZqfeR43uuBFoP78ScUYnzf-EP83LnZWnWb4";
+
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  const map = L.map('map', { worldCopyJump: true }).setView([20, 0], 2);
+  // OpenStreetMap's own tiles — free, no API key. They're light-coloured
+  // by default, so the .leaflet-tile-pane CSS filter above inverts them
+  // into a dark basemap that matches the rest of the page.
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    maxZoom: 19
+  }).addTo(map);
+
+  const clusterGroup = L.markerClusterGroup({ maxClusterRadius: 60 });
+  map.addLayer(clusterGroup);
+
+  let knownIds = new Set();
+  let currentEntries = [];
+  let arrivingKey = null;        // which entry is mid-celebration
+  let firstLoadDone = false;
+  let lastUserInteraction = 0;
+
+  // If someone is actively exploring the map, don't hijack their view to
+  // fly to a new arrival — just announce it in the banner instead.
+  const INTERACTION_GRACE_MS = 25000;
+  ['dragstart', 'zoomstart'].forEach(evt => {
+    map.on(evt, () => { lastUserInteraction = Date.now(); });
+  });
+  function userIsExploring(){
+    return Date.now() - lastUserInteraction < INTERACTION_GRACE_MS;
+  }
+
+  function entryKey(entry){
+    return entry.photoId || `${entry.city}|${entry.lat},${entry.lng}`;
+  }
+
+  function renderMarkers(entries){
+    clusterGroup.clearLayers();
+    entries.forEach(entry => {
+      const matched = !!entry.photoUrl;
+      const isArriving = arrivingKey && entryKey(entry) === arrivingKey;
+
+      const pinHtml = `<div class="photo-pin ${matched ? '' : 'unmatched'} ${isArriving ? 'arriving' : ''}" style="${matched ? `background-image:url('${entry.photoUrl}')` : ''}"></div>`;
+      const burstHtml = isArriving
+        ? '<div class="arrival-burst"><span></span><span></span><span></span></div>'
+        : '';
+
+      const icon = L.divIcon({
+        className: '',
+        html: `<div style="position:relative;width:46px;height:46px;">${burstHtml}<div style="position:absolute;inset:0;">${pinHtml}</div></div>`,
+        iconSize: [46, 46],
+      });
+
+      const marker = L.marker([entry.lat, entry.lng], {
+        icon,
+        zIndexOffset: isArriving ? 1000 : 0,
+      });
+      const popupHtml = matched
+        ? `<img class="popup-photo" src="${entry.photoUrl}"><div class="popup-city">${entry.city}</div>`
+        : `<div class="popup-city">${entry.city}</div>`;
+      marker.bindPopup(popupHtml);
+      clusterGroup.addLayer(marker);
+    });
+
+    const cities = new Set(entries.map(e => e.city.toLowerCase()));
+    document.getElementById('statCities').textContent = cities.size;
+    document.getElementById('statMatched').textContent = entries.filter(e => e.photoUrl).length;
+  }
+
+  function celebrateArrival(entry){
+    arrivingKey = entryKey(entry);
+    renderMarkers(currentEntries);
+
+    // Banner
+    const banner = document.getElementById('arrivalBanner');
+    const photoEl = document.getElementById('arrivalPhoto');
+    document.getElementById('arrivalCity').textContent = entry.city;
+    if (entry.photoUrl){
+      photoEl.src = entry.photoUrl;
+      photoEl.style.display = 'block';
+    } else {
+      photoEl.style.display = 'none';
+    }
+    banner.classList.add('show');
+
+    // Camera move — only if the viewer isn't busy exploring
+    if (!userIsExploring()){
+      map.flyTo([entry.lat, entry.lng], Math.max(map.getZoom(), 5), {
+        duration: 2.0,
+      });
+    }
+
+    setTimeout(() => {
+      banner.classList.remove('show');
+      arrivingKey = null;
+      renderMarkers(currentEntries);
+    }, 7000);
+  }
+
+  // Multiple arrivals between polls are shown one at a time rather than
+  // all at once, so each gets its own moment.
+  let arrivalQueue = [];
+  let queueRunning = false;
+
+  function drainArrivalQueue(){
+    if (queueRunning || !arrivalQueue.length) return;
+    queueRunning = true;
+    const next = arrivalQueue.shift();
+    celebrateArrival(next);
+    setTimeout(() => {
+      queueRunning = false;
+      drainArrivalQueue();
+    }, 7600);
+  }
+
+  function rowToEntry(row){
+    return {
+      city: row.city,
+      lat: row.lat,
+      lng: row.lng,
+      photoUrl: row.photo_url,
+      photoId: row.photo_id,
+    };
+  }
+
+  async function loadInitial(){
+    try {
+      const { data, error } = await sb
+        .from('guests')
+        .select('city,lat,lng,photo_url,photo_id')
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+
+      currentEntries = (data || []).map(rowToEntry);
+      currentEntries.forEach(e => knownIds.add(entryKey(e)));
+      firstLoadDone = true;
+      renderMarkers(currentEntries);
+    } catch (e) {
+      console.warn('Could not load the guest list:', e);
+    }
+  }
+
+  function subscribeToNewGuests(){
+    sb.channel('guests-live')
+      .on('postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'guests' },
+          payload => {
+            const entry = rowToEntry(payload.new);
+            const key = entryKey(entry);
+            if (knownIds.has(key)) return;   // already shown
+            knownIds.add(key);
+            currentEntries.push(entry);
+            renderMarkers(currentEntries);
+            arrivalQueue.push(entry);
+            drainArrivalQueue();
+          })
+      .subscribe(status => {
+        if (status === 'SUBSCRIBED') console.log('Live updates connected.');
+      });
+  }
+
+  loadInitial().then(subscribeToNewGuests);
+</script>
+</body>
+</html>
