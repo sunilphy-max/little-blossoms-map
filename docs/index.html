@@ -266,7 +266,7 @@
      public image URL. Leave it as "" to show no logo at all. */
   const LOGO_URL    = "logo.png";
   const EVENT_TITLE = "Little Blossoms - One World Festival 2026";
-  const EVENT_TAG   = "Zoom out for a count by city — zoom in to see each guest's photo.";
+  const EVENT_TAG   = "Zoom out for a count our guests by city — zoom in to see each guest's photo.";
 
   /* Shown when someone taps the ℹ button. Plain text or simple HTML. */
   const ABOUT_HTML = `
@@ -332,9 +332,10 @@
         icon,
         zIndexOffset: isArriving ? 1000 : 0,
       });
+      const placeLine = `<div class="popup-city">${entry.city}</div>`;
       const popupHtml = matched
-        ? `<img class="popup-photo" src="${entry.photoUrl}"><div class="popup-city">${entry.city}</div>`
-        : `<div class="popup-city">${entry.city}</div>`;
+        ? `<img class="popup-photo" src="${entry.photoUrl}">${placeLine}`
+        : placeLine;
       marker.bindPopup(popupHtml);
       clusterGroup.addLayer(marker);
     });
@@ -397,6 +398,9 @@
       lng: row.lng,
       photoUrl: row.photo_url,
       photoId: row.photo_id,
+      // false when we couldn't find the place and fell back to a
+      // default spot — shown differently so it isn't mistaken for real
+      located: row.located !== false,
     };
   }
 
@@ -404,7 +408,7 @@
     try {
       const { data, error } = await sb
         .from('guests')
-        .select('city,lat,lng,photo_url,photo_id')
+        .select('city,lat,lng,photo_url,photo_id,located')
         .order('created_at', { ascending: true });
       if (error) throw error;
 
