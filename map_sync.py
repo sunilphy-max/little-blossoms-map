@@ -59,6 +59,10 @@ OCR_UPSCALE = 3
 MIN_TEXT_LENGTH = 3
 
 SUPABASE_URL = os.environ["SUPABASE_URL"].strip().rstrip("/")
+# Supabase's dashboard sometimes shows the full REST endpoint rather than
+# the bare project URL. Accept either, since the script adds /rest/v1 itself.
+if SUPABASE_URL.endswith("/rest/v1"):
+    SUPABASE_URL = SUPABASE_URL[: -len("/rest/v1")]
 SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_KEY"].strip()
 
 
@@ -187,32 +191,59 @@ def clean_city_text(raw):
 # =====================================================================
 # Geocoding — Nominatim, cached in Supabase so each city is looked up once
 # =====================================================================
-def geocode_city(city):
-    key = city.strip().lower()
-
-    cached = sb_get("geocode_cache", {"city_key": f"eq.{key}", "select": "lat,lng"})
-    if cached:
-        return {"lat": cached[0]["lat"], "lng": cached[0]["lng"]}
-
+def _nominatim_lookup(query):
+    """One raw lookup. Returns coords or None."""
     try:
         resp = requests.get(
             "https://nominatim.openstreetmap.org/search",
-            params={"format": "json", "limit": 1, "q": city},
+            params={"format": "json", "limit": 1, "q": query},
             headers={"User-Agent": "little-blossoms-guest-map/1.0"},
             timeout=15,
         )
         results = resp.json()
         time.sleep(1.1)   # Nominatim asks for no more than ~1 request/second
     except Exception as e:
-        print(f"  [geocode] request failed for '{city}': {e}")
+        print(f"  [geocode] request failed for '{query}': {e}")
         return None
 
     if not results:
         return None
+    return {"lat": float(results[0]["lat"]), "lng": float(results[0]["lon"])}
 
-    coords = {"lat": float(results[0]["lat"]), "lng": float(results[0]["lon"])}
-    sb_insert("geocode_cache", {"city_key": key, **coords}, upsert=True)
-    return coords
+
+def geocode_city(city):
+    """OCR is rarely perfect, so don't bet everything on the full string
+    being right. Try the whole thing first; if that fails, fall back to
+    just the part before the comma — a single misread character in the
+    state or country shouldn't lose the guest entirely.
+
+    Example: OCR reads 'tatanagar, iharkhand' (a J misread as i).
+    The full string fails; 'tatanagar' alone resolves correctly.
+    """
+    key = city.strip().lower()
+
+    cached = sb_get("geocode_cache", {"city_key": f"eq.{key}", "select": "lat,lng"})
+    if cached:
+        return {"lat": cached[0]["lat"], "lng": cached[0]["lng"]}
+
+    # Build the candidate queries, most specific first, no duplicates.
+    candidates = [city.strip()]
+    if "," in city:
+        first_part = city.split(",")[0].strip()
+        if first_part and first_part.lower() != city.strip().lower():
+            candidates.append(first_part)
+
+    for attempt, query in enumerate(candidates, start=1):
+        coords = _nominatim_lookup(query)
+        if coords:
+            if attempt > 1:
+                print(f"  [geocode] full string failed; matched on '{query}'")
+            # Cache against the original OCR text, so the same misread
+            # resolves instantly next time rather than retrying the chain.
+            sb_insert("geocode_cache", {"city_key": key, **coords}, upsert=True)
+            return coords
+
+    return None
 
 
 # =====================================================================
@@ -225,7 +256,14 @@ def main():
     if not photos:
         return
 
-    done = sb_get("processed_photos", {"select": "photo_id"})
+    # Only skip photos we've actually settled: ones placed on the map,
+    # and ones where the crop genuinely had no text. Geocode failures
+    # are left open deliberately, so improving the matching (or fixing
+    # a misread) gives those guests another chance on the next run.
+    done = sb_get("processed_photos", {
+        "select": "photo_id",
+        "outcome": "in.(placed,no_text)",
+    })
     done_ids = {row["photo_id"] for row in done}
     new_photos = [p for p in photos if p["id"] not in done_ids]
     print(f"  {len(new_photos)} new photo(s) to process")
