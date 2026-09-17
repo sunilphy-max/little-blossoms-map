@@ -80,7 +80,11 @@ def sb_get(table, params):
         params=params,
         timeout=20,
     )
-    resp.raise_for_status()
+    if not resp.ok:
+        # Supabase explains itself in the body; a bare status code doesn't.
+        raise RuntimeError(
+            f"Supabase GET {table} failed: {resp.status_code} {resp.text}"
+        )
     return resp.json()
 
 
