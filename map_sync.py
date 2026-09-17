@@ -58,6 +58,15 @@ OCR_UPSCALE = 3
 # readable" rather than trying to geocode noise.
 MIN_TEXT_LENGTH = 3
 
+# HOW LONG TO KEEP RUNNING, in minutes, checking every POLL_SECONDS.
+# 0 (the default) means a single pass, then exit — right for scheduled
+# runs. Set RUN_FOR_MINUTES in the workflow to keep one job alive for a
+# whole event, which gives ~1-minute latency without paying the
+# Tesseract install cost on every check.
+# GitHub caps a single job at 6 hours, so 330 is a safe maximum.
+RUN_FOR_MINUTES = int(os.environ.get("RUN_FOR_MINUTES", "0"))
+POLL_SECONDS = int(os.environ.get("POLL_SECONDS", "60"))
+
 SUPABASE_URL = os.environ["SUPABASE_URL"].strip().rstrip("/")
 # Supabase's dashboard sometimes shows the full REST endpoint rather than
 # the bare project URL. Accept either, since the script adds /rest/v1 itself.
@@ -249,7 +258,7 @@ def geocode_city(city):
 # =====================================================================
 # Main
 # =====================================================================
-def main():
+def run_once():
     print("Fetching gallery...")
     photos = fetch_gallery_photos()
     print(f"  {len(photos)} photo(s) in the gallery")
@@ -314,6 +323,37 @@ def main():
             print(f"  placed '{city}' at {coords['lat']:.4f}, {coords['lng']:.4f}")
 
     print(f"\nDone. {placed} guest(s) added to the map this run.")
+
+
+def main():
+    if RUN_FOR_MINUTES <= 0:
+        run_once()
+        return
+
+    deadline = time.monotonic() + RUN_FOR_MINUTES * 60
+    print(f"Watching for {RUN_FOR_MINUTES} minutes, checking every {POLL_SECONDS}s.\n")
+
+    pass_no = 0
+    while time.monotonic() < deadline:
+        pass_no += 1
+        started = time.monotonic()
+        print(f"--- check #{pass_no} ---")
+        try:
+            run_once()
+        except Exception as e:
+            # One bad pass shouldn't end the event. Log it and carry on;
+            # the next check picks up anything that was missed.
+            print(f"[error] check #{pass_no} failed: {e}")
+
+        # Sleep the remainder of the interval, so a slow pass (lots of
+        # new photos) doesn't push every later check further behind.
+        elapsed = time.monotonic() - started
+        remaining_in_window = deadline - time.monotonic()
+        if remaining_in_window <= 0:
+            break
+        time.sleep(max(0, min(POLL_SECONDS - elapsed, remaining_in_window)))
+
+    print(f"\nWatch window finished after {pass_no} check(s).")
 
 
 if __name__ == "__main__":
