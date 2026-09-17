@@ -58,6 +58,21 @@ OCR_UPSCALE = 3
 # readable" rather than trying to geocode noise.
 MIN_TEXT_LENGTH = 3
 
+# FALLBACK LOCATION.
+# When OCR reads text but no place can be found for it, the guest is
+# pinned here instead of being dropped. These rows are flagged in the
+# database (located = false) and labelled on the map, so they can be
+# told apart from people genuinely from this city — and so you can
+# correct them afterwards.
+#
+# This applies ONLY to readable-but-unlocatable text. Photos with no
+# text at all (the untemplated originals) are still skipped, otherwise
+# they would all pile up on this one spot.
+FALLBACK_ENABLED = True
+FALLBACK_CITY = "Lancaster, PA"
+FALLBACK_LAT = 40.0379
+FALLBACK_LNG = -76.3055
+
 # HOW LONG TO KEEP RUNNING, in minutes, checking every POLL_SECONDS.
 # 0 (the default) means a single pass, then exit — right for scheduled
 # runs. Set RUN_FOR_MINUTES in the workflow to keep one job alive for a
@@ -271,7 +286,7 @@ def run_once():
     # a misread) gives those guests another chance on the next run.
     done = sb_get("processed_photos", {
         "select": "photo_id",
-        "outcome": "in.(placed,no_text)",
+        "outcome": "in.(placed,placed_fallback,no_text)",
     })
     done_ids = {row["photo_id"] for row in done}
     new_photos = [p for p in photos if p["id"] not in done_ids]
@@ -299,12 +314,17 @@ def run_once():
             continue
 
         coords = geocode_city(city)
-        if not coords:
-            print(f"  could not geocode '{city}' — skipping")
-            sb_insert("processed_photos", {
-                "photo_id": photo["id"], "outcome": "geocode_failed", "ocr_text": raw,
-            })
-            continue
+        located = coords is not None
+
+        if not located:
+            if not FALLBACK_ENABLED:
+                print(f"  could not geocode '{city}' — skipping")
+                sb_insert("processed_photos", {
+                    "photo_id": photo["id"], "outcome": "geocode_failed", "ocr_text": raw,
+                })
+                continue
+            coords = {"lat": FALLBACK_LAT, "lng": FALLBACK_LNG}
+            print(f"  could not geocode '{city}' — pinning to {FALLBACK_CITY} instead")
 
         ok = sb_insert("guests", {
             "city": city,
@@ -312,15 +332,17 @@ def run_once():
             "lng": coords["lng"],
             "photo_url": photo["url"],
             "photo_id": photo["id"],
+            "located": located,
         })
         sb_insert("processed_photos", {
             "photo_id": photo["id"],
-            "outcome": "placed" if ok else "geocode_failed",
+            "outcome": ("placed" if located else "placed_fallback") if ok else "geocode_failed",
             "ocr_text": raw,
         })
         if ok:
             placed += 1
-            print(f"  placed '{city}' at {coords['lat']:.4f}, {coords['lng']:.4f}")
+            if located:
+                print(f"  placed '{city}' at {coords['lat']:.4f}, {coords['lng']:.4f}")
 
     print(f"\nDone. {placed} guest(s) added to the map this run.")
 
