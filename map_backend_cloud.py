@@ -47,11 +47,11 @@ DROPBOX_FOLDER_PATH = "/Littleblossoms-survey"   # the Dropbox folder you export
 # sessions before the event and adjust if they land further apart.
 MATCH_WINDOW_SECONDS = 90
 
-# CSV column headers — export one real test CSV first and set these to
-# match your actual headers exactly.
-COL_TIMESTAMP = "Timestamp"
-COL_OPT_IN = "Want to appear on the map?"
-COL_CITY = "What city were you born in?"
+# CSV column headers — these match the actual LumaBooth export format.
+COL_TIMESTAMP = "Date"
+COL_FILENAME = "Filename"
+COL_OPT_IN = "Want to appear on our guest map?"
+COL_CITY = "What city were you born in? (e.g. Boston, MA)"
 
 YES_VALUES = {"yes", "y", "true"}
 
@@ -209,8 +209,72 @@ def geocode_city(city, cache):
 # CSV processing
 # =====================================================================
 def row_signature(row):
-    raw = f"{row.get(COL_TIMESTAMP,'')}|{row.get(COL_OPT_IN,'')}|{row.get(COL_CITY,'')}"
+    raw = f"{row.get(COL_TIMESTAMP,'')}|{row.get(COL_FILENAME,'')}|{row.get(COL_OPT_IN,'')}|{row.get(COL_CITY,'')}"
     return hashlib.sha1(raw.encode()).hexdigest()
+
+
+def parse_filename_timestamp(filename):
+    """LumaBooth filenames look like 20260916_201311523.jpg — that's
+    YYYYMMDD_HHMMSSmmm, i.e. capture time down to the millisecond.
+    Much more precise than the CSV's minute-resolution Date column."""
+    m = re.match(r"(\d{8})_(\d{6})(\d*)", filename or "")
+    if not m:
+        return None
+    try:
+        return datetime.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S")
+    except ValueError:
+        return None
+
+
+def parse_csv_date(value):
+    """The CSV Date column is US-style local time, e.g. '9/16/2026 20:13'.
+    Used only as a fallback when the filename can't be parsed."""
+    for fmt in ("%m/%d/%Y %H:%M", "%m/%d/%Y %H:%M:%S", "%m/%d/%y %H:%M"):
+        try:
+            return datetime.strptime(value.strip(), fmt)
+        except (ValueError, AttributeError):
+            continue
+    return None
+
+
+def find_matching_photo(row, gallery_photos, used_ids):
+    """Tries two strategies, best first:
+
+    1. FILENAME MATCH — if the CSV's filename appears in the photo's URL,
+       that's an exact identification, no guessing involved.
+    2. TIMESTAMP MATCH — fall back to closest-in-time within the window.
+       Note this is sensitive to timezone differences between the iPad's
+       local time and the gallery's timestamps, which is exactly why the
+       filename match is preferred.
+    """
+    filename = (row.get(COL_FILENAME) or "").strip()
+
+    # Strategy 1: direct filename match against the photo URL
+    if filename:
+        stem = filename.rsplit(".", 1)[0]
+        for photo in gallery_photos:
+            if photo["id"] in used_ids:
+                continue
+            if stem and stem in photo["url"]:
+                return photo, "filename"
+
+    # Strategy 2: closest timestamp within the window
+    row_time = parse_filename_timestamp(filename) or parse_csv_date(row.get(COL_TIMESTAMP, ""))
+    if not row_time:
+        return None, None
+
+    best_photo, best_diff = None, float("inf")
+    for photo in gallery_photos:
+        if photo["id"] in used_ids or not photo["date_added"]:
+            continue
+        photo_time = photo["date_added"]
+        if photo_time.tzinfo is not None:
+            photo_time = photo_time.replace(tzinfo=None)
+        diff = abs((photo_time - row_time).total_seconds())
+        if diff < best_diff and diff <= MATCH_WINDOW_SECONDS:
+            best_diff, best_photo = diff, photo
+
+    return (best_photo, "timestamp") if best_photo else (None, None)
 
 
 def process_csv_text(csv_text, state, gallery_photos):
@@ -234,28 +298,23 @@ def process_csv_text(csv_text, state, gallery_photos):
 
         opt_in = (row.get(COL_OPT_IN) or "").strip().lower()
         city = (row.get(COL_CITY) or "").strip()
-        if opt_in not in YES_VALUES or not city:
+        if opt_in not in YES_VALUES:
+            print(f"[skip] opt-in value '{row.get(COL_OPT_IN)}' is not a yes")
+            continue
+        if not city:
+            print("[skip] opted in but left the city blank")
             continue
 
-        try:
-            row_time = datetime.fromisoformat(row[COL_TIMESTAMP])
-        except Exception:
-            row_time = None
-
-        best_photo, best_diff = None, float("inf")
-        if row_time:
-            for photo in gallery_photos:
-                if photo["id"] in used_ids or not photo["date_added"]:
-                    continue
-                diff = abs((photo["date_added"] - row_time).total_seconds())
-                if diff < best_diff and diff <= MATCH_WINDOW_SECONDS:
-                    best_diff, best_photo = diff, photo
-
+        best_photo, how = find_matching_photo(row, gallery_photos, used_ids)
         if best_photo:
             used_ids.add(best_photo["id"])
+            print(f"[match] '{city}' matched to a photo by {how}")
+        else:
+            print(f"[match] '{city}' — no photo match found, will show as a plain pin")
 
         coords = geocode_city(city, state["geocodeCache"])
         if not coords:
+            print(f"[skip] could not geocode '{city}' — not placed on the map")
             continue
 
         state["entries"].append({
