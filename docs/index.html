@@ -25,9 +25,85 @@
   html,body{height:100%;}
   body{margin:0;background:var(--ink);color:var(--paper);font-family:'Inter',sans-serif;display:flex;flex-direction:column;}
 
-  header{padding:14px 20px;border-bottom:1px solid var(--line);}
-  header h1{font-family:'Fraunces',serif;font-weight:600;font-size:18px;margin:0 0 2px;}
+  header{
+    padding:12px 18px;
+    border-bottom:1px solid var(--line);
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:14px;
+  }
+  .brand{display:flex;align-items:center;gap:12px;min-width:0;}
+  .brand-logo{
+    height:38px;width:auto;max-width:120px;
+    object-fit:contain;
+    flex-shrink:0;
+  }
+  .brand-text{min-width:0;}
+  header h1{
+    font-family:'Fraunces',serif;font-weight:600;font-size:18px;
+    margin:0 0 2px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
   header p{margin:0;font-size:12.5px;color:var(--paper-dim);}
+
+  .about-btn{
+    flex-shrink:0;
+    width:30px;height:30px;
+    border-radius:50%;
+    border:1px solid var(--line);
+    background:var(--ink-raised);
+    color:var(--paper-dim);
+    font-family:'Fraunces',serif;
+    font-size:15px;
+    font-style:italic;
+    cursor:pointer;
+    line-height:1;
+  }
+  .about-btn:hover{border-color:var(--gold);color:var(--gold);}
+
+  .about-overlay{
+    position:fixed;inset:0;
+    background:rgba(6,7,9,0.78);
+    display:none;
+    align-items:center;justify-content:center;
+    z-index:3000;
+    padding:22px;
+  }
+  .about-overlay.open{display:flex;}
+  .about-card{
+    background:var(--ink-raised);
+    border:1px solid var(--line);
+    border-radius:16px;
+    padding:26px 24px 22px;
+    max-width:440px;width:100%;
+    position:relative;
+    max-height:80vh;overflow-y:auto;
+  }
+  .about-card h3{
+    font-family:'Fraunces',serif;font-weight:600;font-size:18px;
+    margin:0 0 10px;color:var(--paper);
+  }
+  .about-card p{
+    font-size:13.5px;line-height:1.6;color:var(--paper-dim);margin:0 0 12px;
+  }
+  .about-card .about-foot{
+    font-size:11.5px;color:#7d7869;margin:16px 0 0;
+    padding-top:12px;border-top:1px solid var(--line);
+  }
+  .about-close{
+    position:absolute;top:12px;right:14px;
+    background:none;border:none;
+    color:var(--paper-dim);font-size:26px;line-height:1;
+    cursor:pointer;padding:0;
+  }
+  .about-close:hover{color:var(--paper);}
+
+  @media (max-width:520px){
+    header h1{font-size:16px;}
+    header p{font-size:11.5px;}
+    .brand-logo{height:30px;}
+  }
 
   .stats{display:flex;gap:16px;padding:8px 20px;border-bottom:1px solid var(--line);font-size:12px;color:var(--paper-dim);}
   .stats b{color:var(--paper);font-weight:600;}
@@ -138,10 +214,22 @@
 <body>
 
 <header>
-  <h3>Little Blossoms - One World!</h3>
-  <h2>Where Our Guests Are From</h2>
-  <p>Zoom out for a count by city — zoom in to see each guest's photo.</p>
+  <div class="brand">
+    <img id="brandLogo" class="brand-logo" alt="" hidden>
+    <div class="brand-text">
+      <h1 id="eventTitle"></h1>
+      <p id="eventTag"></p>
+    </div>
+  </div>
+  <button class="about-btn" id="aboutBtn" aria-label="About this map">i</button>
 </header>
+
+<div class="about-overlay" id="aboutOverlay">
+  <div class="about-card">
+    <button class="about-close" id="aboutClose" aria-label="Close">&times;</button>
+    <div id="aboutBody"></div>
+  </div>
+</div>
 
 <div class="stats">
   <span><b id="statCities">0</b> cities</span>
@@ -171,6 +259,25 @@
   const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNscnh2ZWtqdmljbXN4b3R4YXdxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk2MDcxNTAsImV4cCI6MjEwNTE4MzE1MH0.Bs5dv04VZqfeR43uuBFoP78ScUYnzf-EP83LnZWnWb4";
 
   const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  /* ---- Branding. Edit these freely. ----
+     LOGO_URL: put your logo file next to this one and deploy the whole
+     folder to Netlify (drag the folder, not the file). Or paste any
+     public image URL. Leave it as "" to show no logo at all. */
+  const LOGO_URL    = "logo.png";
+  const EVENT_TITLE = "Where Our Guests Are From";
+  const EVENT_TAG   = "Zoom out for a count by city — zoom in to see each guest's photo.";
+
+  /* Shown when someone taps the ℹ button. Plain text or simple HTML. */
+  const ABOUT_HTML = `
+    <h3>Little Blossoms at the One World Festival</h3>
+    <p>Every photo on this map was taken at our booth today. Each guest
+       told us the city they were born in — together they trace where
+       our community comes from.</p>
+    <p>Want to join the map? Visit the Little Blossoms photo booth,
+       take a photo, and tell us your city.</p>
+    <p class="about-foot">Little Blossoms · Event Factory, LLC</p>
+  `;
 
   const map = L.map('map', { worldCopyJump: true }).setView([20, 0], 2);
   // OpenStreetMap's own tiles — free, no API key. They're light-coloured
@@ -328,6 +435,35 @@
         if (status === 'SUBSCRIBED') console.log('Live updates connected.');
       });
   }
+
+  // Branding
+  document.getElementById('eventTitle').textContent = EVENT_TITLE;
+  document.getElementById('eventTag').textContent = EVENT_TAG;
+  document.getElementById('aboutBody').innerHTML = ABOUT_HTML;
+
+  const logoEl = document.getElementById('brandLogo');
+  if (LOGO_URL){
+    // Only show the logo once it actually loads, so a missing file
+    // leaves a clean header rather than a broken-image icon.
+    logoEl.onload = () => { logoEl.hidden = false; };
+    logoEl.onerror = () => { console.warn('Logo not found at', LOGO_URL); };
+    logoEl.src = LOGO_URL;
+  }
+
+  const overlay = document.getElementById('aboutOverlay');
+  document.getElementById('aboutBtn').addEventListener('click', () => overlay.classList.add('open'));
+  document.getElementById('aboutClose').addEventListener('click', () => overlay.classList.remove('open'));
+  overlay.addEventListener('click', e => {
+    if (e.target === overlay) overlay.classList.remove('open');
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') overlay.classList.remove('open');
+  });
+
+  // Guards against the map rendering into a stale container size, which
+  // can leave blank bands where tiles should be.
+  window.addEventListener('load', () => setTimeout(() => map.invalidateSize(), 120));
+  window.addEventListener('resize', () => map.invalidateSize());
 
   loadInitial().then(subscribeToNewGuests);
 </script>
