@@ -2,7 +2,10 @@ name: Sync photo map
 
 on:
   schedule:
-    - cron: "*/15 * * * *"   # every 15 minutes — GitHub may delay a few minutes at busy times
+    - cron: "*/5 * * * *"    # every 5 minutes — GitHub's minimum, and it
+                             # often runs late during busy periods. The real
+                             # bottleneck is how often someone exports the
+                             # CSV from the iPad, not this number.
   workflow_dispatch: {}       # lets you trigger a run manually from the Actions tab, for testing
 
 jobs:
