@@ -368,7 +368,7 @@ def main():
     while time.monotonic() < deadline:
         pass_no += 1
         started = time.monotonic()
-        print(f"--- check #{pass_no} at {datetime.now().strftime('%H:%M:%S')} ---")
+        print(f"--- check #{pass_no} at {time.strftime('%H:%M:%S')} UTC ---")
         try:
             run_once()
         except Exception as e:
