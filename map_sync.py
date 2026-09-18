@@ -137,9 +137,18 @@ def sb_insert(table, row, upsert=False):
 # =====================================================================
 def fetch_gallery_photos():
     headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; LittleBlossomsMapSync/1.0; personal-event-use)"
+        "User-Agent": "Mozilla/5.0 (compatible; LittleBlossomsMapSync/1.0; personal-event-use)",
+        # Without these, a CDN or proxy can hand back a cached copy of the
+        # gallery page, which looks identical to a slow upload.
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
     }
-    resp = requests.get(GALLERY_URL, headers=headers, timeout=20)
+    resp = requests.get(
+        GALLERY_URL,
+        headers=headers,
+        params={"_": int(time.time())},   # cache-buster
+        timeout=20,
+    )
     resp.raise_for_status()
 
     match = re.search(r"let sessionImages\s*=\s*(\{.*?\});", resp.text, re.S)
@@ -359,7 +368,7 @@ def main():
     while time.monotonic() < deadline:
         pass_no += 1
         started = time.monotonic()
-        print(f"--- check #{pass_no} ---")
+        print(f"--- check #{pass_no} at {datetime.now().strftime('%H:%M:%S')} ---")
         try:
             run_once()
         except Exception as e:
